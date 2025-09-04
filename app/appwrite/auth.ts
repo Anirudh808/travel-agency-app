@@ -4,12 +4,12 @@ import { redirect } from "react-router";
 
 export const getExistingUser = async (id: string) => {
   try {
-    const { documents, total } = await database.listDocuments(
+    const { rows, total } = await database.listRows(
       appwriteConfig.databaseId,
       appwriteConfig.userCollectionId,
       [Query.equal("accountId", id)]
     );
-    return total > 0 ? documents[0] : null;
+    return total > 0 ? rows[0] : null;
   } catch (error) {
     console.error("Error fetching user:", error);
     return null;
@@ -21,12 +21,23 @@ export const storeUserData = async () => {
     const user = await account.get();
     if (!user) throw new Error("User not found");
 
-    const { providerAccessToken } = (await account.getSession("current")) || {};
+    // Get current session
+    const sessions = await account.listSessions();
+    const currentSession = sessions.sessions.find((s) => s.current);
+    const providerAccessToken = currentSession?.providerAccessToken;
+
+    console.log("from storeUser current session: ", currentSession);
+    console.log("from storeUser providedAccessToken: ", providerAccessToken);
+
+    // If Google OAuth, fetch profile picture
     const profilePicture = providerAccessToken
       ? await getGooglePicture(providerAccessToken)
       : null;
 
-    const createdUser = await database.createDocument(
+    console.log("from storeUser profile picture: ", profilePicture);
+
+    // Create user doc
+    const createdUser = await database.createRow(
       appwriteConfig.databaseId,
       appwriteConfig.userCollectionId,
       ID.unique(),
@@ -39,7 +50,10 @@ export const storeUserData = async () => {
       }
     );
 
+    console.log("from storeuser created user: ", createdUser);
+
     if (!createdUser.$id) redirect("/sign-in");
+    return createdUser;
   } catch (error) {
     console.error("Error storing user data:", error);
   }
@@ -73,9 +87,25 @@ export const loginWithGoogle = async () => {
   }
 };
 
+export const signUpUser = async () => {
+  const user = await account.get();
+  console.log("From loginWithGoogle => user: ", user);
+  if (!user.$id) {
+    return redirect("/sign-in");
+  }
+  const existingUser = await getExistingUser(user.$id);
+
+  if (!existingUser?.$id) {
+    return await storeUserData();
+  } else {
+    return existingUser;
+  }
+};
+
 export const logoutUser = async () => {
   try {
     await account.deleteSession("current");
+    return redirect("/sign-in");
   } catch (error) {
     console.error("Error during logout:", error);
   }
@@ -86,7 +116,7 @@ export const getUser = async () => {
     const user = await account.get();
     if (!user) return redirect("/sign-in");
 
-    const { documents } = await database.listDocuments(
+    const { rows } = await database.listRows(
       appwriteConfig.databaseId,
       appwriteConfig.userCollectionId,
       [
@@ -95,7 +125,7 @@ export const getUser = async () => {
       ]
     );
 
-    return documents.length > 0 ? documents[0] : redirect("/sign-in");
+    return rows.length > 0 ? rows[0] : redirect("/sign-in");
   } catch (error) {
     console.error("Error fetching user:", error);
     return null;
